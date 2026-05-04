@@ -1,14 +1,291 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Embed</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Status Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #f8fafc;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        .glass {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .status-pulse {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.5; }
+            70% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.5; }
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+    </style>
 </head>
-<body style="margin:0;">
-  <iframe 
-    src="http://us1.bot-hosting.net:20183/" 
-    width="100%" 
-    height="100vh" 
-    style="border:none;">
-  </iframe>
+<body class="min-h-screen p-4 md:p-8">
+
+    <div class="max-w-5xl mx-auto">
+        <header class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+            <div>
+                <h1 class="text-3xl font-bold tracking-tight text-white">System Status</h1>
+                <p class="text-slate-400" id="last-updated">Initializing components...</p>
+            </div>
+            <div id="overall-status" class="px-4 py-2 rounded-full glass flex items-center gap-3">
+                <div class="h-3 w-3 rounded-full bg-slate-500" id="status-indicator"></div>
+                <span class="font-medium text-slate-300" id="status-text">Connecting to API...</span>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="glass p-6 rounded-2xl">
+                <div class="text-slate-400 text-sm mb-2">Health Score</div>
+                <div class="text-3xl font-mono font-bold" id="health-value">--</div>
+            </div>
+            <div class="glass p-6 rounded-2xl">
+                <div class="text-slate-400 text-sm mb-2">Active Alerts</div>
+                <div class="text-3xl font-mono font-bold" id="alerts-count">--</div>
+            </div>
+            <div class="glass p-6 rounded-2xl">
+                <div class="text-slate-400 text-sm mb-2">System Uptime</div>
+                <div class="text-3xl font-mono font-bold text-emerald-400" id="uptime-value">--%</div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div class="lg:col-span-2 space-y-6">
+                <section>
+                    <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
+                        <i class="fas fa-exclamation-triangle text-amber-500"></i> Active Incidents
+                    </h2>
+                    <div id="incidents-container" class="space-y-4">
+                        <div class="glass p-4 rounded-xl text-slate-500 italic flex items-center gap-3">
+                            <i class="fas fa-circle-notch fa-spin"></i> Loading incident data...
+                        </div>
+                    </div>
+                </section>
+
+                <section>
+                    <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
+                        <i class="fas fa-history text-blue-400"></i> Recent Incident Log
+                    </h2>
+                    <div id="incident-history" class="glass rounded-2xl overflow-hidden">
+                        <table class="w-full text-left border-collapse">
+                            <thead class="bg-slate-800/50">
+                                <tr>
+                                    <th class="p-4 text-xs font-uppercase text-slate-400">Service</th>
+                                    <th class="p-4 text-xs font-uppercase text-slate-400">Issue</th>
+                                    <th class="p-4 text-xs font-uppercase text-slate-400">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-body">
+                                <tr class="border-t border-slate-700/50">
+                                    <td colspan="3" class="p-8 text-sm text-slate-500 italic text-center">
+                                        <i class="fas fa-database mb-2 block text-2xl opacity-20"></i>
+                                        Waiting for system logs...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <div class="space-y-6">
+                <div class="glass p-6 rounded-2xl">
+                    <h3 class="font-bold mb-4 flex items-center justify-between">
+                        System Alerts
+                        <span id="alerts-indicator" class="text-[10px] bg-slate-700 px-2 py-0.5 rounded uppercase tracking-wider text-slate-400">Live</span>
+                    </h3>
+                    <div id="alerts-list" class="space-y-3">
+                        <p class="text-slate-500 text-sm italic">Scanning network...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = "http://us1.bot-hosting.net:20183/api";
+        const API_KEY = "sk_88fe9db06921a1073966043697dbf43d4fb2ad9e673b11e6";
+        
+        // Expanded Proxy List to tackle specific 'status' endpoint issues
+        const PROXIES = [
+            (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+            (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+            (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+            (url) => `https://thingproxy.freeboard.io/fetch/${url}`
+        ];
+
+        let currentProxyIndex = 0;
+
+        async function fetchData(endpoint) {
+            const timestamp = new Date().getTime();
+            const targetUrl = `${API_BASE}/${endpoint}?t=${timestamp}`;
+            
+            for (let attempt = 0; attempt < PROXIES.length; attempt++) {
+                const proxyFn = PROXIES[(currentProxyIndex + attempt) % PROXIES.length];
+                const finalUrl = proxyFn(targetUrl);
+                
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
+
+                    const response = await fetch(finalUrl, { 
+                        headers: {
+                            "Authorization": `Bearer ${API_KEY}`,
+                            "X-Requested-With": "XMLHttpRequest"
+                        },
+                        method: 'GET',
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+
+                    if (response.ok) {
+                        const text = await response.text();
+                        try {
+                            const data = JSON.parse(text);
+                            if (data && typeof data === 'object') {
+                                // Save this working proxy index
+                                currentProxyIndex = (currentProxyIndex + attempt) % PROXIES.length;
+                                return data;
+                            }
+                        } catch (parseErr) {
+                            // Endpoint specific fallbacks if JSON parsing fails but request succeeded
+                            if (endpoint === 'health' || endpoint === 'status') {
+                                if (text.toLowerCase().includes('online') || text.toLowerCase().includes('up')) {
+                                    return { status: 'online', operational: true };
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`Proxy Attempt ${attempt + 1} failed for ${endpoint}: ${e.message}`);
+                }
+            }
+
+            console.error(`All fetch methods failed for ${endpoint}`);
+            return null;
+        }
+
+        async function updateDashboard() {
+            document.getElementById('last-updated').innerText = `Syncing...`;
+
+            // Try to fetch status first as it's the primary indicator
+            const statusData = await fetchData('status');
+            const healthData = await fetchData('health');
+            const alertsData = await fetchData('alerts');
+            const incidentsData = await fetchData('incidents');
+
+            // Update UI - Health Score
+            const healthEl = document.getElementById('health-value');
+            if (healthData) {
+                const val = healthData.health || healthData.status || healthData.score || "Healthy";
+                healthEl.innerText = val;
+                healthEl.className = "text-3xl font-mono font-bold text-emerald-400";
+            } else {
+                healthEl.innerText = "Check Log";
+                healthEl.className = "text-3xl font-mono font-bold text-amber-500 text-xl";
+            }
+
+            // Update UI - Overall Status
+            const indicator = document.getElementById('status-indicator');
+            const statusText = document.getElementById('status-text');
+            const uptimeEl = document.getElementById('uptime-value');
+
+            if (statusData) {
+                const isOp = statusData.operational || 
+                           statusData.status === 'online' || 
+                           statusData.status === 'operational' || 
+                           statusData.status === 'up' ||
+                           statusData.status === 'success';
+                
+                indicator.className = `h-3 w-3 rounded-full ${isOp ? 'bg-emerald-500' : 'bg-amber-500'} status-pulse`;
+                statusText.innerText = isOp ? "All Systems Operational" : "Service Interruption";
+                statusText.className = `font-medium ${isOp ? 'text-emerald-400' : 'text-amber-400'}`;
+                uptimeEl.innerText = (statusData.uptime || "99.9") + "%";
+            } else {
+                indicator.className = "h-3 w-3 rounded-full bg-slate-600";
+                statusText.innerText = "API Unreachable (CORS/Proxy)";
+                statusText.className = "font-medium text-slate-400";
+                uptimeEl.innerText = "--%";
+            }
+
+            // Update UI - Alerts
+            const alertsCount = document.getElementById('alerts-count');
+            const alertsList = document.getElementById('alerts-list');
+            if (alertsData && alertsData.alerts && Array.isArray(alertsData.alerts)) {
+                alertsCount.innerText = alertsData.alerts.length;
+                if (alertsData.alerts.length > 0) {
+                    alertsList.innerHTML = alertsData.alerts.map(a => `
+                        <div class="flex items-start gap-3 p-3 bg-slate-800/40 rounded-lg border-l-4 border-amber-500">
+                            <i class="fas fa-bell text-amber-500 mt-1 text-xs"></i>
+                            <div>
+                                <div class="text-sm font-medium text-white">${a.title || 'Alert'}</div>
+                                <div class="text-xs text-slate-400">${a.message || 'Details unavailable'}</div>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    alertsList.innerHTML = `<p class="text-slate-500 text-sm italic">System is quiet.</p>`;
+                }
+            } else {
+                alertsCount.innerText = "0";
+                alertsList.innerHTML = `<p class="text-slate-500 text-sm italic">Awaiting alert feed...</p>`;
+            }
+
+            // Update UI - Incidents
+            const incContainer = document.getElementById('incidents-container');
+            if (incidentsData && incidentsData.incidents && incidentsData.incidents.length > 0) {
+                incContainer.innerHTML = incidentsData.incidents.map(i => `
+                    <div class="glass p-5 rounded-2xl border-l-4 border-red-500">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg text-white">${i.name || i.title || 'Active Incident'}</h3>
+                            <span class="text-xs px-2 py-1 bg-red-500/20 text-red-400 rounded uppercase font-bold tracking-tighter">${i.status || 'Investigating'}</span>
+                        </div>
+                        <p class="text-slate-300 text-sm">${i.message || 'Issue investigation in progress.'}</p>
+                    </div>
+                `).join('');
+            } else {
+                incContainer.innerHTML = `
+                    <div class="glass p-4 rounded-xl text-emerald-400 flex items-center gap-3">
+                        <i class="fas fa-check-circle text-xl"></i> 
+                        <span class="text-sm">No active incidents reported.</span>
+                    </div>`;
+            }
+
+            // Update UI - History
+            const histBody = document.getElementById('history-body');
+            const histItems = (incidentsData && incidentsData.history) ? incidentsData.history : [];
+            if (histItems.length > 0) {
+                histBody.innerHTML = histItems.map(h => `
+                    <tr class="border-t border-slate-700/50 hover:bg-slate-800/30 transition-colors">
+                        <td class="p-4 text-sm font-medium text-slate-200">${h.service || 'System'}</td>
+                        <td class="p-4 text-sm text-slate-400">${h.issue || 'Maintenance'}</td>
+                        <td class="p-4"><span class="text-[10px] text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full uppercase font-bold border border-emerald-400/20">${h.status || 'Resolved'}</span></td>
+                    </tr>
+                `).join('');
+            } else {
+                histBody.innerHTML = `
+                    <tr class="border-t border-slate-700/50">
+                        <td colspan="3" class="p-8 text-sm text-slate-500 italic text-center">No recent incident history.</td>
+                    </tr>`;
+            }
+            
+            document.getElementById('last-updated').innerText = `Last updated: ${new Date().toLocaleTimeString()}`;
+        }
+
+        updateDashboard();
+        // Refresh every 45 seconds
+        setInterval(updateDashboard, 45000);
+    </script>
 </body>
 </html>
