@@ -118,63 +118,81 @@
                     </div>
                 </div>
 
-                <!-- Troubleshooting Info -->
-                <div id="connection-debug" class="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-400">
-                    <p class="font-bold mb-1"><i class="fas fa-info-circle mr-1"></i> CORS Tunneling:</p>
-                    <p>Using a proxy to securely access your bot-hosting API from this environment.</p>
+                <!-- Connection Status -->
+                <div id="connection-status" class="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-400">
+                    <p class="font-bold mb-1"><i class="fas fa-info-circle mr-1"></i> API Status:</p>
+                    <p id="connection-message">Connecting to API...</p>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
-        // EXACT HARDCODED URLS provided by user
+        // Configuration
+        const API_BASE_URL = "http://us1.bot-hosting.net:20183";
+        const API_KEY = "sk_88fe9db06921a1073966043697dbf43d4fb2ad9e673b11e6";
+        
+        // Backend proxy endpoint (you need to set this up on your server)
+        // This prevents CORS issues by routing requests through your own backend
+        const BACKEND_PROXY = "/api/proxy"; // Change to your actual backend endpoint
+
         const ENDPOINTS = {
-            STATUS: "http://us1.bot-hosting.net:20183/api/status?api_key=sk_88fe9db06921a1073966043697dbf43d4fb2ad9e673b11e6",
-            INCIDENTS: "http://us1.bot-hosting.net:20183/api/incidents?api_key=sk_88fe9db06921a1073966043697dbf43d4fb2ad9e673b11e6",
-            SERVICES: "http://us1.bot-hosting.net:20183/api/services?api_key=sk_88fe9db06921a1073966043697dbf43d4fb2ad9e673b11e6",
-            HEALTH: "http://us1.bot-hosting.net:20183/api/health?api_key=sk_88fe9db06921a1073966043697dbf43d4fb2ad9e673b11e6",
-            STATS: "http://us1.bot-hosting.net:20183/api/stats?api_key=sk_88fe9db06921a1073966043697dbf43d4fb2ad9e673b11e6",
-            ALERTS: "http://us1.bot-hosting.net:20183/api/alerts?api_key=sk_88fe9db06921a1073966043697dbf43d4fb2ad9e673b11e6"
+            STATUS: "/api/status",
+            INCIDENTS: "/api/incidents",
+            SERVICES: "/api/services",
+            HEALTH: "/api/health",
+            STATS: "/api/stats",
+            ALERTS: "/api/alerts"
         };
 
-        // Browser security prevents 'Mixed Content' and 'CORS' requests to non-https/external ports.
-        // We use reliable proxies to bypass this.
-        const PROXY_URLS = [
-            (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-            (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
-        ];
+        /**
+         * Fetch data from API endpoint
+         * Uses backend proxy to avoid CORS issues
+         */
+        async function fetchData(endpoint) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-        async function fetchData(url) {
-            for (const proxyFn of PROXY_URLS) {
-                const proxiedUrl = proxyFn(url);
-                try {
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 10000);
+                // Option 1: Using backend proxy (RECOMMENDED)
+                // const url = `${BACKEND_PROXY}?endpoint=${encodeURIComponent(endpoint)}&api_key=${encodeURIComponent(API_KEY)}`;
+                
+                // Option 2: Direct fetch (only works if API has CORS enabled)
+                const url = `${API_BASE_URL}${endpoint}?api_key=${API_KEY}`;
 
-                    const response = await fetch(proxiedUrl, { 
-                        method: 'GET',
-                        signal: controller.signal
-                    });
-                    
-                    clearTimeout(timeoutId);
-
-                    if (response.ok) {
-                        const data = await response.json();
-                        return data;
+                const response = await fetch(url, {
+                    method: 'GET',
+                    signal: controller.signal,
+                    headers: {
+                        'Accept': 'application/json',
                     }
-                } catch (e) {
-                    console.warn(`Proxy failed for ${url}, trying next...`);
-                    continue;
+                });
+
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    console.error(`API Error [${endpoint}]: ${response.status} ${response.statusText}`);
+                    return null;
                 }
+
+                const data = await response.json();
+                console.log(`✓ Successfully fetched ${endpoint}`, data);
+                return data;
+
+            } catch (error) {
+                console.error(`✗ Failed to fetch ${endpoint}:`, error.message);
+                return null;
             }
-            return null;
         }
 
+        /**
+         * Main dashboard update function
+         */
         async function updateDashboard() {
             document.getElementById('last-updated').innerText = `Refreshing...`;
+            updateConnectionStatus('Fetching data from API...');
 
-            // Parallel fetch using proxies
+            // Parallel fetch all endpoints
             const [status, incidents, services, health, stats, alerts] = await Promise.all([
                 fetchData(ENDPOINTS.STATUS),
                 fetchData(ENDPOINTS.INCIDENTS),
@@ -184,16 +202,66 @@
                 fetchData(ENDPOINTS.ALERTS)
             ]);
 
+            // Check if any data was successfully fetched
+            const hasData = !![status, incidents, services, health, stats, alerts].some(d => d);
+            
+            if (hasData) {
+                updateConnectionStatus('Connected ✓');
+            } else {
+                updateConnectionStatus('Failed to connect to API. Check console for details.');
+            }
+
             // 1. Health Score
+            updateHealthScore(health);
+
+            // 2. Status & Uptime
+            updateStatusAndUptime(status);
+
+            // 3. Incidents
+            updateIncidents(incidents);
+
+            // 4. Services
+            updateServices(services);
+
+            // 5. Stats
+            updateStats(stats);
+
+            // 6. Alerts
+            updateAlerts(alerts);
+
+            document.getElementById('last-updated').innerText = `Last updated: ${new Date().toLocaleTimeString()}`;
+        }
+
+        /**
+         * Update connection status message
+         */
+        function updateConnectionStatus(message) {
+            const el = document.getElementById('connection-message');
+            if (el) {
+                el.textContent = message;
+            }
+        }
+
+        /**
+         * Update health score display
+         */
+        function updateHealthScore(health) {
             const healthEl = document.getElementById('health-value');
             if (health) {
                 const val = (health.status || health.score || health.health || "Operational").toString();
                 healthEl.innerText = val;
                 healthEl.className = "text-3xl font-mono font-bold " + 
                     (val.toLowerCase().includes('healthy') || val.toLowerCase().includes('op') ? 'text-emerald-400' : 'text-amber-400');
+            } else {
+                healthEl.innerText = "Unable to fetch";
+                healthEl.className = "text-3xl font-mono font-bold text-slate-500";
             }
+        }
 
-            // 2. Status & Uptime
+        /**
+         * Update status indicator and uptime
+         */
+        function updateStatusAndUptime(status) {
             const indicator = document.getElementById('status-indicator');
             const statusText = document.getElementById('status-text');
             const uptimeEl = document.getElementById('uptime-value');
@@ -206,12 +274,19 @@
                 uptimeEl.innerText = (status.uptime || "99.98") + "%";
             } else {
                 indicator.className = "h-3 w-3 rounded-full bg-slate-600";
-                statusText.innerText = "Connecting to Tunnel...";
+                statusText.innerText = "Unable to fetch status";
+                statusText.className = "font-medium text-slate-400";
+                uptimeEl.innerText = "--";
             }
+        }
 
-            // 3. Incidents
+        /**
+         * Update incidents display
+         */
+        function updateIncidents(incidents) {
             const incContainer = document.getElementById('incidents-container');
             const incList = (incidents?.incidents || incidents?.data || []);
+            
             if (Array.isArray(incList) && incList.length > 0) {
                 incContainer.innerHTML = incList.map(i => `
                     <div class="glass p-5 rounded-2xl border-l-4 border-red-500 transition-all hover:translate-x-1">
@@ -221,7 +296,7 @@
                                 ${i.status || 'Investigating'}
                             </span>
                         </div>
-                        <p class="text-slate-300 text-sm leading-relaxed">${i.message || i.description || 'Our engineering team is currently investigating connectivity issues with this component.'}</p>
+                        <p class="text-slate-300 text-sm leading-relaxed">${i.message || i.description || 'No description provided.'}</p>
                         <div class="mt-3 text-[10px] text-slate-500 font-mono uppercase">${i.created_at || 'Recently Reported'}</div>
                     </div>
                 `).join('');
@@ -237,10 +312,15 @@
                         </div>
                     </div>`;
             }
+        }
 
-            // 4. Services
+        /**
+         * Update services display
+         */
+        function updateServices(services) {
             const servicesGrid = document.getElementById('services-grid');
             const servList = (services?.services || services?.data || []);
+            
             if (Array.isArray(servList) && servList.length > 0) {
                 servicesGrid.innerHTML = servList.map(s => `
                     <div class="glass p-4 rounded-xl flex items-center justify-between hover:bg-slate-800/80 transition-colors">
@@ -255,9 +335,15 @@
                 `).join('');
             } else if (services) {
                 servicesGrid.innerHTML = `<p class="text-slate-500 text-sm italic col-span-2 text-center py-4">No services listed.</p>`;
+            } else {
+                servicesGrid.innerHTML = `<p class="text-slate-500 text-sm italic col-span-2 text-center py-4">Unable to fetch services.</p>`;
             }
+        }
 
-            // 5. Stats
+        /**
+         * Update performance stats display
+         */
+        function updateStats(stats) {
             const statsGrid = document.getElementById('stats-grid');
             if (stats) {
                 const items = stats.data || stats;
@@ -274,13 +360,20 @@
                         count++;
                     }
                 }
-                statsGrid.innerHTML = html;
+                statsGrid.innerHTML = html || `<p class="text-slate-500 text-sm italic">No stats available</p>`;
+            } else {
+                statsGrid.innerHTML = `<p class="text-slate-500 text-sm italic">Unable to fetch stats</p>`;
             }
+        }
 
-            // 6. Alerts
+        /**
+         * Update alerts display
+         */
+        function updateAlerts(alerts) {
             const alertsCount = document.getElementById('alerts-count');
             const alertsList = document.getElementById('alerts-list');
             const alList = (alerts?.alerts || alerts?.data || []);
+            
             if (Array.isArray(alList)) {
                 alertsCount.innerText = alList.length;
                 if (alList.length > 0) {
@@ -298,13 +391,13 @@
                 }
             } else {
                 alertsCount.innerText = "0";
+                alertsList.innerHTML = `<p class="text-slate-500 text-sm italic py-4 text-center">Unable to fetch alerts</p>`;
             }
-
-            document.getElementById('last-updated').innerText = `Last updated: ${new Date().toLocaleTimeString()}`;
         }
 
-        // Initialize
+        // Initialize dashboard
         updateDashboard();
+        
         // Refresh interval (30 seconds)
         setInterval(updateDashboard, 30000);
     </script>
